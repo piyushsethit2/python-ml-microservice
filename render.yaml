@@ -8,6 +8,14 @@ services:
     envVars:
       - key: PORT
         value: 5002
+      - key: HOST
+        value: 0.0.0.0
       - key: HF_MODEL_NAME
         value: distilbert-base-uncased
+      - key: DEVICE
+        value: cpu
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
     autoDeploy: true 
