@@ -21,7 +21,7 @@ WHITELISTED_DOMAINS = [
     'wordpress.com', 'blogspot.com', 'tumblr.com'
 ]
 
-# Suspicious patterns for URL analysis
+# Suspicious patterns for URL analysis - more conservative
 SUSPICIOUS_PATTERNS = [
     r'\b(?:login|signin|secure|verify|account|bank|paypal|ebay)\b',
     r'\b(?:update|confirm|reset|password|credential|invoice|payment|alert)\b',
@@ -30,7 +30,13 @@ SUSPICIOUS_PATTERNS = [
     r'\b(?:free|download|click|here|now|urgent|limited|offer)\b',
     r'\b(?:winner|prize|lottery|claim|reward|bonus|cash)\b',
     r'\b(?:virus|malware|scan|clean|remove|fix|repair)\b',
-    r'\b(?:suspended|locked|banned|restricted|verify|confirm)\b'
+    r'\b(?:suspended|locked|banned|restricted|verify|confirm)\b',
+    # High-risk patterns that are more specific
+    r'\b(?:bitcoin.*wallet|wallet.*bitcoin)\b',
+    r'\b(?:paypal.*verify|verify.*paypal)\b',
+    r'\b(?:bank.*login|login.*bank)\b',
+    r'\b(?:password.*reset|reset.*password)\b',
+    r'\b(?:account.*suspended|suspended.*account)\b'
 ]
 
 def get_model_config() -> Dict[str, Any]:
@@ -59,9 +65,22 @@ def is_whitelisted_domain(url: str) -> bool:
     
     domain = domain_match.group(1)
     
-    # Check if domain is whitelisted
+    # Check if domain is whitelisted (exact match or subdomain)
     for whitelisted in WHITELISTED_DOMAINS:
-        if whitelisted in domain or domain.endswith('.' + whitelisted):
+        if domain == whitelisted or domain.endswith('.' + whitelisted):
+            return True
+    
+    # Additional check for common legitimate domains
+    legitimate_domains = [
+        'bopsecrets.org', 'wikipedia.org', 'github.com', 'stackoverflow.com',
+        'reddit.com', 'medium.com', 'dev.to', 'hashnode.com', 'blogspot.com',
+        'wordpress.com', 'tumblr.com', 'livejournal.com', 'blogger.com',
+        'google.com', 'facebook.com', 'amazon.com', 'microsoft.com', 'apple.com',
+        'netflix.com', 'youtube.com', 'twitter.com', 'linkedin.com'
+    ]
+    
+    for legit_domain in legitimate_domains:
+        if domain == legit_domain or domain.endswith('.' + legit_domain):
             return True
     
     return False

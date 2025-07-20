@@ -143,24 +143,38 @@ def predict_malicious(text: str) -> Dict[str, Any]:
         # Extract features for rule-based classification
         features = extract_url_features(text)
         
-        # Rule-based classification since model is not trained
+        # Rule-based classification with better logic
         label = "safe"
-        confidence = 0.5
+        confidence = 0.8  # Default high confidence for safe
         reason = []
         
-        # More conservative high-risk indicators
-        if features['suspicious_patterns'] >= 3:
+        # Whitelist override logic - should be checked FIRST
+        if features['is_whitelisted']:
+            label = "safe"
+            confidence = 0.95
+            reason.append("whitelisted domain override")
+            return {
+                "label": label,
+                "probability": confidence,
+                "confidence": confidence,
+                "processed_text": processed_text[:100] + "..." if len(processed_text) > 100 else processed_text,
+                "features": features,
+                "reason": reason
+            }
+        
+        # More conservative high-risk indicators - only flag if very suspicious
+        if features['suspicious_patterns'] >= 4:
             label = "malicious"
             confidence = 0.85
-            reason.append(f"suspicious_patterns >= 3 ({features['suspicious_patterns']})")
-        elif features['suspicious_patterns'] == 2:
+            reason.append(f"suspicious_patterns >= 4 ({features['suspicious_patterns']})")
+        elif features['suspicious_patterns'] == 3:
+            label = "malicious"
+            confidence = 0.75
+            reason.append(f"suspicious_patterns == 3")
+        elif features['suspicious_ratio'] > 0.5:  # Increased threshold
             label = "malicious"
             confidence = 0.7
-            reason.append(f"suspicious_patterns == 2")
-        elif features['suspicious_ratio'] > 0.3:
-            label = "malicious"
-            confidence = 0.65
-            reason.append(f"suspicious_ratio > 0.3 ({features['suspicious_ratio']:.2f})")
+            reason.append(f"suspicious_ratio > 0.5 ({features['suspicious_ratio']:.2f})")
         
         # More specific suspicious keywords (only high-risk ones)
         suspicious_keywords = [
@@ -175,17 +189,11 @@ def predict_malicious(text: str) -> Dict[str, Any]:
             if keyword in normalized_text:
                 keyword_count += 1
         
-        # Only flag as malicious if multiple suspicious keywords are found
-        if keyword_count >= 2:
+        # Only flag as malicious if multiple suspicious keywords are found AND not whitelisted
+        if keyword_count >= 3:  # Increased threshold
             label = "malicious"
-            confidence = max(confidence, 0.7)
+            confidence = max(confidence, 0.75)
             reason.append(f"multiple suspicious keywords detected ({keyword_count})")
-        
-        # Whitelist override logic
-        if features['is_whitelisted']:
-            label = "safe"
-            confidence = max(confidence, 0.9)
-            reason.append("whitelisted domain override")
         
         # Additional whitelist for common legitimate domains
         legitimate_domains = [
@@ -206,11 +214,11 @@ def predict_malicious(text: str) -> Dict[str, Any]:
                 confidence = max(confidence, 0.8)
                 reason.append("legitimate domain detected")
         
-        # High-risk pattern detection
-        if features['suspicious_patterns'] > 3:
+        # High-risk pattern detection - only for very high scores
+        if features['suspicious_patterns'] > 5:
             label = "malicious"
             confidence = max(confidence, 0.9)
-            reason.append(f"suspicious_patterns > 3 ({features['suspicious_patterns']})")
+            reason.append(f"suspicious_patterns > 5 ({features['suspicious_patterns']})")
         
         # Log the reason for debugging
         logger.info(f"Rule-based decision: label={label}, confidence={confidence}, reasons={reason}, features={features}")
