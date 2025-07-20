@@ -29,11 +29,11 @@ ENV NLTK_DATA=/app/nltk_data
 RUN python -c "import nltk; nltk.download('vader_lexicon', quiet=True)"
 
 # Expose port
-EXPOSE 5000
+EXPOSE 5002
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5000/health || exit 1
+    CMD curl -f http://localhost:5002/health || exit 1
 
-# Run the application
-CMD ["python", "ml_microservice.py"] 
+# Use gunicorn for production
+CMD ["gunicorn", "--bind", "0.0.0.0:5002", "--workers", "1", "--timeout", "30", "ml_microservice:app"] 
