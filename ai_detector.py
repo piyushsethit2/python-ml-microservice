@@ -13,13 +13,23 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from urllib.parse import urlparse
 import logging
-from transformers import pipeline, AutoTokenizer, AutoModel
-from sentence_transformers import SentenceTransformer
 import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Lightweight imports - no heavy transformers
+try:
+    import nltk
+    from nltk.sentiment import SentimentIntensityAnalyzer
+    # Download required NLTK data
+    nltk.download('vader_lexicon', quiet=True)
+    nltk.download('punkt', quiet=True)
+    NLTK_AVAILABLE = True
+except ImportError:
+    NLTK_AVAILABLE = False
+    logger.warning("NLTK not available, using fallback sentiment analysis")
 
 @dataclass
 class ThreatIntelligence:
@@ -48,38 +58,24 @@ class ThreatIntelligenceCollector:
     def __init__(self):
         # Free API endpoints (no authentication required for basic usage)
         self.apis = {
-            "phish_tank": "https://checkurl.phishtank.com/checkurl/",
-            "url_void": "https://api.urlvoid.com/v1/path/",
-            "google_safe": "https://safebrowsing.googleapis.com/v4/threatMatches:find"
+            'phish_tank': 'https://checkurl.phishtank.com/checkurl/',
+            'url_void': 'https://api.urlvoid.com/v1/path/',
+            'whois': 'https://api.domainsdb.info/v1/domains/search'
         }
-        
-        # Rate limiting
-        self.rate_limits = {
-            "phish_tank": {"requests": 0, "limit": 100, "window": 3600},
-            "url_void": {"requests": 0, "limit": 100, "window": 86400},
-            "google_safe": {"requests": 0, "limit": 10000, "window": 86400}
-        }
+        logger.info("Threat Intelligence Collector initialized")
     
     def collect_all(self, url: str) -> ThreatIntelligence:
-        """Collect threat intelligence from all available sources"""
+        """Collect all available threat intelligence"""
         logger.info(f"Collecting threat intelligence for: {url}")
         
         intel = ThreatIntelligence()
         
         try:
-            # PhishTank check (free, no API key required)
+            # Collect in parallel (simplified for memory efficiency)
             intel.phish_tank = self.check_phishtank(url)
-            
-            # URLVoid check (free tier)
             intel.url_void = self.check_urlvoid(url)
-            
-            # WHOIS data (free)
             intel.whois_data = self.get_whois_data(url)
-            
-            # DNS reputation (free)
             intel.dns_data = self.get_dns_reputation(url)
-            
-            # SSL certificate analysis (free)
             intel.ssl_data = self.analyze_ssl_certificate(url)
             
         except Exception as e:
@@ -156,89 +152,107 @@ class ThreatIntelligenceCollector:
     def check_urlvoid(self, url: str) -> Dict[str, Any]:
         """Check URL against URLVoid database"""
         try:
-            # URLVoid requires domain only
+            # Simple URLVoid check (no API key required for basic usage)
             domain = urlparse(url).netloc
             
-            response = requests.get(f"{self.apis['url_void']}{domain}")
+            # Use a free URL reputation service
+            reputation_url = f"https://api.urlvoid.com/v1/path/{domain}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(reputation_url, headers=headers, timeout=10)
             
             if response.status_code == 200:
                 data = response.json()
                 return {
                     "detections": data.get("detections", 0),
                     "engines": data.get("engines", 0),
-                    "scan_date": data.get("scan_date"),
                     "details": data.get("details", {})
                 }
+            else:
+                return {"detections": 0, "engines": 0, "error": f"HTTP {response.status_code}"}
+                
         except Exception as e:
             logger.warning(f"URLVoid check failed: {e}")
-        
-        return {"detections": 0, "engines": 0}
+            return {"detections": 0, "engines": 0, "error": str(e)}
     
     def get_whois_data(self, url: str) -> Dict[str, Any]:
         """Get WHOIS data for domain"""
         try:
             domain = urlparse(url).netloc
             
-            # Use free WHOIS service
-            response = requests.get(f"https://whois.whoisxmlapi.com/api/v1?apiKey=at_demo&domainName={domain}")
+            # Use a free WHOIS service
+            whois_url = f"https://api.domainsdb.info/v1/domains/search?domain={domain}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(whois_url, headers=headers, timeout=10)
             
             if response.status_code == 200:
                 data = response.json()
-                return {
-                    "registrar": data.get("registrar", {}),
-                    "creation_date": data.get("creationDate"),
-                    "expiration_date": data.get("expirationDate"),
-                    "domain_age_days": self.calculate_domain_age(data.get("creationDate")),
-                    "country": data.get("registrant", {}).get("country")
-                }
+                if data.get("domains"):
+                    domain_info = data["domains"][0]
+                    creation_date = domain_info.get("create_date")
+                    return {
+                        "domain": domain,
+                        "creation_date": creation_date,
+                        "domain_age_days": self.calculate_domain_age(creation_date),
+                        "registrar": domain_info.get("registrar"),
+                        "country": domain_info.get("country")
+                    }
+            
+            return {"domain": domain, "domain_age_days": 999, "error": "No data"}
+            
         except Exception as e:
             logger.warning(f"WHOIS check failed: {e}")
-        
-        return {}
+            return {"domain": urlparse(url).netloc, "domain_age_days": 999, "error": str(e)}
     
     def get_dns_reputation(self, url: str) -> Dict[str, Any]:
-        """Analyze DNS reputation"""
+        """Get DNS reputation data"""
         try:
             domain = urlparse(url).netloc
             
-            # Check for suspicious DNS patterns
-            suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.gq']
-            suspicious_subdomains = ['www', 'secure', 'login', 'signin']
+            # Simple DNS analysis
+            suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.gq', '.xyz', '.top', '.club']
+            suspicious_subdomains = ['www1', 'www2', 'www3', 'secure', 'login', 'verify']
+            
+            tld = '.' + domain.split('.')[-1]
+            subdomain = domain.split('.')[0] if len(domain.split('.')) > 2 else None
             
             return {
-                "suspicious_tld": any(domain.endswith(tld) for tld in suspicious_tlds),
-                "suspicious_subdomain": any(sub in domain.lower() for sub in suspicious_subdomains),
-                "domain_length": len(domain),
-                "subdomain_count": domain.count('.')
+                "domain": domain,
+                "suspicious_tld": tld in suspicious_tlds,
+                "suspicious_subdomain": subdomain in suspicious_subdomains if subdomain else False,
+                "subdomain_count": len(domain.split('.')) - 2
             }
+            
         except Exception as e:
-            logger.warning(f"DNS analysis failed: {e}")
-        
-        return {}
+            logger.warning(f"DNS reputation check failed: {e}")
+            return {"error": str(e)}
     
     def analyze_ssl_certificate(self, url: str) -> Dict[str, Any]:
         """Analyze SSL certificate"""
         try:
-            import ssl
-            import socket
+            if not url.startswith('https://'):
+                return {"valid": False, "reason": "No HTTPS"}
             
             domain = urlparse(url).netloc
-            context = ssl.create_default_context()
             
-            with socket.create_connection((domain, 443), timeout=10) as sock:
-                with context.wrap_socket(sock, server_hostname=domain) as ssock:
-                    cert = ssock.getpeercert()
-                    
-                    return {
-                        "valid": True,
-                        "issuer": dict(x[0] for x in cert['issuer']),
-                        "subject": dict(x[0] for x in cert['subject']),
-                        "expires": cert['notAfter'],
-                        "san": cert.get('subjectAltName', [])
-                    }
+            # Simple SSL check
+            response = requests.get(url, timeout=10, verify=True)
+            
+            return {
+                "valid": True,
+                "issuer": "Unknown",
+                "expires": "Unknown"
+            }
+            
         except Exception as e:
-            logger.warning(f"SSL analysis failed: {e}")
-            return {"valid": False, "error": str(e)}
+            return {"valid": False, "reason": str(e)}
     
     def calculate_domain_age(self, creation_date: str) -> int:
         """Calculate domain age in days"""
@@ -253,31 +267,28 @@ class ThreatIntelligenceCollector:
         return 0
 
 class AIAnalyzer:
-    """Performs AI-powered analysis using free models"""
+    """Performs AI-powered analysis using lightweight models"""
     
     def __init__(self):
-        logger.info("Initializing AI Analyzer...")
+        logger.info("Initializing Lightweight AI Analyzer...")
         
-        try:
-            # Load pre-trained models (free from Hugging Face)
-            self.sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased")
-            self.text_classifier = pipeline("text-classification", model="microsoft/DialoGPT-medium")
-            self.similarity_model = SentenceTransformer('all-MiniLM-L6-v2')
-            
-            logger.info("AI models loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load AI models: {e}")
-            # Fallback to rule-based analysis
+        # Use lightweight sentiment analysis
+        if NLTK_AVAILABLE:
+            self.sentiment_analyzer = SentimentIntensityAnalyzer()
+            logger.info("NLTK sentiment analyzer loaded")
+        else:
+            self.sentiment_analyzer = None
+            logger.warning("Using fallback sentiment analysis")
     
     def analyze_url(self, url: str, content: str = "", intel: ThreatIntelligence = None) -> AIAnalysis:
         """Perform comprehensive AI analysis"""
-        logger.info(f"Performing AI analysis for: {url}")
+        logger.info(f"Performing lightweight AI analysis for: {url}")
         
         analysis = AIAnalysis()
         reasoning = []
         
         try:
-            # 1. Semantic Analysis
+            # 1. Semantic Analysis (lightweight)
             semantic_score = self.analyze_semantics(url, content)
             analysis.semantic_score = semantic_score
             reasoning.append(f"Semantic analysis score: {semantic_score:.3f}")
@@ -313,14 +324,20 @@ class AIAnalyzer:
         return analysis
     
     def analyze_semantics(self, url: str, content: str) -> float:
-        """Analyze semantic meaning of URL and content"""
+        """Analyze semantic meaning of URL and content using lightweight methods"""
         try:
             # Combine URL and content for analysis
             text = f"{url} {content[:500]}"  # Limit content length
             
-            # Sentiment analysis
-            sentiment_result = self.sentiment_analyzer(text)
-            sentiment_score = sentiment_result[0]['score']
+            # Lightweight sentiment analysis
+            if self.sentiment_analyzer:
+                sentiment_result = self.sentiment_analyzer.polarity_scores(text)
+                sentiment_score = sentiment_result['compound']  # -1 to 1
+                # Convert to 0-1 scale
+                sentiment_score = (sentiment_score + 1) / 2
+            else:
+                # Fallback sentiment analysis
+                sentiment_score = self._fallback_sentiment(text)
             
             # Detect suspicious language patterns
             suspicious_patterns = [
@@ -342,6 +359,26 @@ class AIAnalyzer:
             
         except Exception as e:
             logger.warning(f"Semantic analysis failed: {e}")
+            return 0.5
+    
+    def _fallback_sentiment(self, text: str) -> float:
+        """Fallback sentiment analysis without NLTK"""
+        try:
+            # Simple keyword-based sentiment
+            positive_words = ['good', 'safe', 'secure', 'trusted', 'verified', 'official']
+            negative_words = ['urgent', 'suspended', 'locked', 'verify', 'confirm', 'update', 'secure']
+            
+            text_lower = text.lower()
+            positive_count = sum(1 for word in positive_words if word in text_lower)
+            negative_count = sum(1 for word in negative_words if word in text_lower)
+            
+            if positive_count == 0 and negative_count == 0:
+                return 0.5
+            
+            return max(0.0, min(1.0, positive_count / (positive_count + negative_count)))
+            
+        except Exception as e:
+            logger.warning(f"Fallback sentiment failed: {e}")
             return 0.5
     
     def analyze_behavioral_patterns(self, url: str, content: str) -> float:
