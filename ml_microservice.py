@@ -15,10 +15,29 @@ from sklearn.ensemble import RandomForestClassifier
 import pickle
 from model_config import get_model_config, is_whitelisted_domain, get_suspicious_score, CONFIDENCE_THRESHOLDS
 from ai_detector import detect_malicious_url, AIMalwareDetector
+from datetime import datetime
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure enhanced logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('app.log')
+    ]
+)
+
+# Create logger
 logger = logging.getLogger(__name__)
+
+# Log startup information
+logger.info("=== Python ML Microservice Starting ===")
+logger.info("Service: AI-powered URL malware detection")
+logger.info("Version: 1.0.0")
+logger.info("Environment: Production")
+logger.info("AI Detector: Lightweight NLTK-based analysis")
+logger.info("========================================")
 
 app = Flask(__name__)
 
@@ -356,15 +375,37 @@ def predict():
             "probability": 0.0
         }), 500
 
-@app.route("/health", methods=["GET"])
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        "status": "healthy",
-        "model": "scikit-learn", # Indicate it's a lightweight model
-        "device": DEVICE,
-        "model_loaded": True # Always True for scikit-learn
-    })
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for monitoring"""
+    try:
+        # Check if AI detector is working
+        test_result = ai_detector.analyze_url("https://example.com")
+        
+        health_status = {
+            "status": "UP",
+            "service": "Python ML Microservice",
+            "version": "1.0.0",
+            "ai_detector": "working",
+            "timestamp": datetime.now().isoformat(),
+            "endpoints": {
+                "/predict": "POST - URL prediction endpoint",
+                "/health": "GET - Health check endpoint"
+            }
+        }
+        
+        app.logger.info("Health check passed - AI detector is working")
+        return jsonify(health_status), 200
+        
+    except Exception as e:
+        app.logger.error(f"Health check failed: {str(e)}")
+        health_status = {
+            "status": "DOWN",
+            "service": "Python ML Microservice",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+        return jsonify(health_status), 503
 
 @app.route("/info", methods=["GET"])
 def info():
