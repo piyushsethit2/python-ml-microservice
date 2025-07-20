@@ -90,23 +90,68 @@ class ThreatIntelligenceCollector:
     def check_phishtank(self, url: str) -> Dict[str, Any]:
         """Check URL against PhishTank database"""
         try:
-            # Hash the URL for PhishTank API
-            url_hash = hashlib.sha256(url.encode()).hexdigest()
+            # Use PhishTank's public API with better error handling
+            api_url = "https://checkurl.phishtank.com/checkurl/"
             
-            response = requests.get(f"{self.apis['phish_tank']}{url_hash}")
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            
+            data = {'url': url}
+            
+            response = requests.post(api_url, data=data, headers=headers, timeout=10)
             
             if response.status_code == 200:
-                data = response.json()
+                result = response.json()
                 return {
-                    "is_phishing": data.get("in_database", False),
-                    "verified": data.get("verified", False),
-                    "verified_at": data.get("verified_at"),
-                    "details": data.get("details", {})
+                    "is_phishing": result.get("in_database", False),
+                    "verified": result.get("verified", False),
+                    "verified_at": result.get("verified_at"),
+                    "details": result.get("details", {})
                 }
+            else:
+                logger.warning(f"PhishTank API returned {response.status_code}")
+                # Fallback: try alternative method
+                return self._fallback_phishtank_check(url)
+                
         except Exception as e:
             logger.warning(f"PhishTank check failed: {e}")
-        
-        return {"is_phishing": False, "verified": False}
+            return self._fallback_phishtank_check(url)
+    
+    def _fallback_phishtank_check(self, url: str) -> Dict[str, Any]:
+        """Fallback PhishTank check using different method"""
+        try:
+            # Try using the search API instead
+            search_url = f"https://phishtank.org/phish_search.php?q={requests.utils.quote(url)}"
+            
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            
+            response = requests.get(search_url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                # Simple pattern matching for phishing indicators
+                content = response.text.lower()
+                phishing_indicators = [
+                    'phish', 'malicious', 'suspicious', 'reported', 'verified'
+                ]
+                
+                indicator_count = sum(1 for indicator in phishing_indicators if indicator in content)
+                
+                return {
+                    "is_phishing": indicator_count > 2,
+                    "verified": False,
+                    "confidence": min(indicator_count / len(phishing_indicators), 1.0),
+                    "method": "fallback_search"
+                }
+            else:
+                return {"is_phishing": False, "error": f"HTTP {response.status_code}"}
+                
+        except Exception as e:
+            logger.warning(f"Fallback PhishTank check failed: {e}")
+            return {"is_phishing": False, "error": str(e)}
     
     def check_urlvoid(self, url: str) -> Dict[str, Any]:
         """Check URL against URLVoid database"""
@@ -307,18 +352,63 @@ class AIAnalyzer:
             # URL-based behavioral analysis
             url_lower = url.lower()
             
-            # Suspicious URL patterns
+            # Enhanced suspicious URL patterns for phishing detection
             suspicious_url_patterns = [
                 r'bitcoin.*wallet|wallet.*bitcoin',
                 r'paypal.*verify|verify.*paypal',
                 r'bank.*login|login.*bank',
                 r'password.*reset|reset.*password',
-                r'account.*suspended|suspended.*account'
+                r'account.*suspended|suspended.*account',
+                r'secure.*login|login.*secure',
+                r'verify.*account|account.*verify',
+                r'update.*information|information.*update',
+                r'confirm.*details|details.*confirm',
+                r'validate.*account|account.*validate',
+                r'security.*check|check.*security',
+                r'login.*required|required.*login',
+                r'access.*denied|denied.*access',
+                r'account.*locked|locked.*account',
+                r'verify.*identity|identity.*verify',
+                r'update.*profile|profile.*update',
+                r'confirm.*email|email.*confirm',
+                r'verify.*phone|phone.*verify',
+                r'secure.*access|access.*secure',
+                r'login.*portal|portal.*login'
             ]
             
             for pattern in suspicious_url_patterns:
                 if re.search(pattern, url_lower):
                     score += 0.3
+            
+            # Domain-based analysis
+            domain = urlparse(url).netloc.lower()
+            
+            # Suspicious domain patterns
+            suspicious_domain_patterns = [
+                r'secure.*login|login.*secure',
+                r'verify.*account|account.*verify',
+                r'bank.*online|online.*bank',
+                r'paypal.*secure|secure.*paypal',
+                r'ebay.*verify|verify.*ebay',
+                r'amazon.*secure|secure.*amazon',
+                r'apple.*verify|verify.*apple',
+                r'google.*secure|secure.*google',
+                r'facebook.*verify|verify.*facebook',
+                r'twitter.*verify|verify.*twitter',
+                r'linkedin.*verify|verify.*linkedin',
+                r'netflix.*verify|verify.*netflix',
+                r'spotify.*verify|verify.*spotify',
+                r'uber.*verify|verify.*uber',
+                r'lyft.*verify|verify.*lyft',
+                r'airbnb.*verify|verify.*airbnb',
+                r'booking.*verify|verify.*booking',
+                r'expedia.*verify|verify.*expedia',
+                r'hotels.*verify|verify.*hotels'
+            ]
+            
+            for pattern in suspicious_domain_patterns:
+                if re.search(pattern, domain):
+                    score += 0.4  # Higher score for domain-level patterns
             
             # Content-based behavioral analysis
             if content:
@@ -333,9 +423,23 @@ class AIAnalyzer:
                     score += 0.15
                 
                 # Urgency indicators
-                urgency_words = ['urgent', 'immediate', 'now', 'limited', 'expires']
+                urgency_words = ['urgent', 'immediate', 'now', 'limited', 'expires', 'soon', 'quickly', 'hurry']
                 urgency_count = sum(1 for word in urgency_words if word in content_lower)
                 score += urgency_count * 0.1
+                
+                # Suspicious form fields
+                suspicious_fields = ['ssn', 'social', 'security', 'number', 'credit', 'card', 'cvv', 'cvc', 'pin', 'password']
+                field_count = sum(1 for field in suspicious_fields if field in content_lower)
+                score += field_count * 0.1
+            
+            # Additional phishing indicators
+            if 'consultancy' in domain or 'consulting' in domain:
+                # Many phishing sites use generic business terms
+                score += 0.2
+            
+            if len(domain.split('.')) > 2:
+                # Subdomains can be suspicious
+                score += 0.1
             
             return min(1.0, score)
             
@@ -396,11 +500,12 @@ class AIAnalyzer:
     
     def determine_risk_level(self, confidence: float, intel: ThreatIntelligence = None) -> str:
         """Determine risk level based on confidence and intelligence"""
-        if confidence >= 0.8:
+        # More aggressive thresholds for better phishing detection
+        if confidence >= 0.6:  # Lowered from 0.8
             return "high"
-        elif confidence >= 0.6:
+        elif confidence >= 0.4:  # Lowered from 0.6
             return "medium"
-        elif confidence >= 0.4:
+        elif confidence >= 0.2:  # Lowered from 0.4
             return "low"
         else:
             return "safe"
@@ -424,8 +529,8 @@ class AIMalwareDetector:
             # 2. Perform AI analysis
             analysis = self.ai_analyzer.analyze_url(url, content, intel)
             
-            # 3. Generate prediction
-            is_malicious = analysis.confidence > 0.6 or analysis.risk_level in ["high", "medium"]
+            # 3. Enhanced decision logic with multiple indicators
+            is_malicious = self._enhanced_decision_logic(url, analysis, intel)
             
             # 4. Prepare result
             result = {
@@ -447,10 +552,10 @@ class AIMalwareDetector:
                     "threat_correlation": analysis.threat_correlation
                 },
                 "model": "ai-powered",
-                "version": "1.0"
+                "version": "1.1"
             }
             
-            logger.info(f"AI detection completed: {result['risk_level']} risk, {result['confidence']:.3f} confidence")
+            logger.info(f"AI detection completed: {result['risk_level']} risk, {result['confidence']:.3f} confidence, malicious: {is_malicious}")
             return result
             
         except Exception as e:
@@ -462,8 +567,79 @@ class AIMalwareDetector:
                 "risk_level": "unknown",
                 "reasoning": [f"Detection error: {str(e)}"],
                 "model": "ai-powered",
-                "version": "1.0"
+                "version": "1.1"
             }
+    
+    def _enhanced_decision_logic(self, url: str, analysis: AIAnalysis, intel: ThreatIntelligence) -> bool:
+        """Enhanced decision logic with multiple indicators"""
+        malicious_indicators = 0
+        total_indicators = 0
+        
+        # 1. AI Analysis confidence
+        if analysis.confidence > 0.5:
+            malicious_indicators += 1
+        total_indicators += 1
+        
+        # 2. Risk level
+        if analysis.risk_level in ["high", "medium"]:
+            malicious_indicators += 1
+        total_indicators += 1
+        
+        # 3. PhishTank check (if available)
+        if intel.phish_tank and intel.phish_tank.get("is_phishing"):
+            malicious_indicators += 2  # Higher weight for confirmed phishing
+            total_indicators += 1
+        
+        # 4. URLVoid detections
+        if intel.url_void and intel.url_void.get("detections", 0) > 0:
+            malicious_indicators += 1
+            total_indicators += 1
+        
+        # 5. Domain age (new domains are suspicious)
+        if intel.whois_data and intel.whois_data.get("domain_age_days", 999) < 30:
+            malicious_indicators += 1
+            total_indicators += 1
+        
+        # 6. SSL certificate issues
+        if intel.ssl_data and not intel.ssl_data.get("valid", True):
+            malicious_indicators += 1
+            total_indicators += 1
+        
+        # 7. DNS reputation issues
+        if intel.dns_data and (intel.dns_data.get("suspicious_tld") or intel.dns_data.get("suspicious_subdomain")):
+            malicious_indicators += 1
+            total_indicators += 1
+        
+        # 8. URL pattern analysis
+        suspicious_patterns = [
+            r'bitcoin.*wallet|wallet.*bitcoin',
+            r'paypal.*verify|verify.*paypal',
+            r'bank.*login|login.*bank',
+            r'password.*reset|reset.*password',
+            r'account.*suspended|suspended.*account',
+            r'secure.*login|login.*secure',
+            r'verify.*account|account.*verify',
+            r'update.*information|information.*update'
+        ]
+        
+        url_lower = url.lower()
+        pattern_matches = sum(1 for pattern in suspicious_patterns if re.search(pattern, url_lower))
+        if pattern_matches > 0:
+            malicious_indicators += min(pattern_matches, 2)  # Cap at 2
+            total_indicators += 1
+        
+        # 9. Content accessibility (404 errors are suspicious for phishing)
+        if "404" in str(intel.dns_data) or "error" in str(intel.dns_data):
+            malicious_indicators += 1
+            total_indicators += 1
+        
+        # Decision logic: More aggressive threshold
+        if total_indicators > 0:
+            malicious_ratio = malicious_indicators / total_indicators
+            return malicious_ratio >= 0.3  # Lowered threshold from 0.6
+        
+        # Fallback to AI confidence
+        return analysis.confidence > 0.5
 
 # Global instance
 ai_detector = AIMalwareDetector()
