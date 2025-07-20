@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Advanced ML Microservice for Malicious URL Detection
-Uses scikit-learn for lightweight phishing/malware detection
+AI-Powered ML Microservice for Malicious URL Detection
+Uses advanced AI models and threat intelligence for dynamic detection
 """
 
 from flask import Flask, request, jsonify
@@ -14,6 +14,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.ensemble import RandomForestClassifier
 import pickle
 from model_config import get_model_config, is_whitelisted_domain, get_suspicious_score, CONFIDENCE_THRESHOLDS
+from ai_detector import detect_malicious_url, AIMalwareDetector
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -24,17 +25,19 @@ app = Flask(__name__)
 # Configuration
 DEVICE = "cpu"  # Always use CPU for scikit-learn
 
-# Initialize a simple model (will use rule-based fallback)
-logger.info("Initializing lightweight ML microservice")
+# Initialize AI-powered detection system
+logger.info("Initializing AI-Powered ML microservice")
 
-# Simple TF-IDF vectorizer for URL features
+# Initialize AI detector
+ai_detector = AIMalwareDetector()
+
+# Fallback to simple model for compatibility
 vectorizer = TfidfVectorizer(
     max_features=1000,
     ngram_range=(1, 3),
     stop_words='english'
 )
 
-# Simple classifier (will be trained with dummy data or use rule-based)
 classifier = RandomForestClassifier(n_estimators=100, random_state=42)
     
 # Initialize with dummy data to avoid training issues
@@ -51,10 +54,9 @@ try:
     # Fit the vectorizer and classifier with dummy data
     X_dummy = vectorizer.fit_transform(dummy_urls)
     classifier.fit(X_dummy, dummy_labels)
-    logger.info("Model initialized with dummy data")
+    logger.info("Fallback model initialized with dummy data")
 except Exception as e:
-    logger.error(f"Error initializing model: {e}")
-    # Continue with rule-based fallback
+    logger.error(f"Error initializing fallback model: {e}")
 
 def normalize_url(url: str) -> str:
     """
@@ -134,7 +136,66 @@ def preprocess_url(url: str, content: str = "") -> str:
 
 def predict_malicious(text: str) -> Dict[str, Any]:
     """
-    Predict if the given text (URL + content) is malicious
+    Predict if the given text (URL + content) is malicious using AI-powered detection
+    """
+    try:
+        # Use AI-powered detection as primary method
+        ai_result = ai_detector.detect_malicious(text)
+        
+        # Map AI result to expected format
+        label = "malicious" if ai_result["is_malicious"] else "safe"
+        confidence = ai_result["confidence"]
+        
+        # Prepare detailed reasoning
+        reason = ai_result.get("reasoning", [])
+        
+        # Add threat intelligence details
+        threat_intel = ai_result.get("threat_intelligence", {})
+        if threat_intel.get("phish_tank", {}).get("is_phishing"):
+            reason.append("PhishTank: URL found in phishing database")
+        
+        if threat_intel.get("url_void", {}).get("detections", 0) > 0:
+            detections = threat_intel["url_void"]["detections"]
+            engines = threat_intel["url_void"]["engines"]
+            reason.append(f"URLVoid: {detections}/{engines} engines detected as malicious")
+        
+        # Add AI analysis details
+        ai_analysis = ai_result.get("ai_analysis", {})
+        if ai_analysis.get("semantic_score", 0) > 0.6:
+            reason.append(f"Semantic analysis: High suspicious language score ({ai_analysis['semantic_score']:.3f})")
+        
+        if ai_analysis.get("behavioral_score", 0) > 0.6:
+            reason.append(f"Behavioral analysis: Suspicious patterns detected ({ai_analysis['behavioral_score']:.3f})")
+        
+        # Fallback to rule-based if AI fails
+        if confidence == 0.0 or not reason:
+            logger.warning("AI detection failed, falling back to rule-based detection")
+            return fallback_rule_based_detection(text)
+        
+        logger.info(f"AI-powered decision: label={label}, confidence={confidence}, risk_level={ai_result['risk_level']}")
+        
+        return {
+            "label": label,
+            "probability": confidence,
+            "confidence": confidence,
+            "processed_text": text[:100] + "..." if len(text) > 100 else text,
+            "features": {
+                "ai_model": "ai-powered",
+                "risk_level": ai_result["risk_level"],
+                "threat_intelligence": threat_intel,
+                "ai_analysis": ai_analysis
+            },
+            "reason": reason
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in AI prediction: {e}")
+        logger.info("Falling back to rule-based detection")
+        return fallback_rule_based_detection(text)
+
+def fallback_rule_based_detection(text: str) -> Dict[str, Any]:
+    """
+    Fallback to rule-based detection if AI fails
     """
     try:
         # Preprocess input
@@ -221,7 +282,7 @@ def predict_malicious(text: str) -> Dict[str, Any]:
             reason.append(f"suspicious_patterns > 5 ({features['suspicious_patterns']})")
         
         # Log the reason for debugging
-        logger.info(f"Rule-based decision: label={label}, confidence={confidence}, reasons={reason}, features={features}")
+        logger.info(f"Fallback rule-based decision: label={label}, confidence={confidence}, reasons={reason}")
         
         return {
             "label": label,
@@ -233,7 +294,7 @@ def predict_malicious(text: str) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"Error in prediction: {e}")
+        logger.error(f"Error in fallback prediction: {e}")
         return {
             "label": "unknown",
             "probability": 0.5,
