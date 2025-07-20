@@ -36,7 +36,7 @@ vectorizer = TfidfVectorizer(
 
 # Simple classifier (will be trained with dummy data or use rule-based)
 classifier = RandomForestClassifier(n_estimators=100, random_state=42)
-
+    
 # Initialize with dummy data to avoid training issues
 dummy_urls = [
     "google.com",
