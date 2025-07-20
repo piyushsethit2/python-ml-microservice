@@ -1,8 +1,8 @@
 # Optimized Dockerfile for Render deployment (512MB memory limit)
 FROM python:3.9.18-alpine
 
-# Install system dependencies
-RUN apk add --no-cache gcc musl-dev linux-headers
+# Install system dependencies including C++ compiler for scikit-learn/numpy
+RUN apk add --no-cache gcc g++ musl-dev linux-headers build-base
 
 WORKDIR /app
 
@@ -13,7 +13,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     # Clean up to reduce image size
-    rm -rf /root/.cache/pip
+    rm -rf /root/.cache/pip && \
+    # Remove build dependencies to reduce image size
+    apk del gcc g++ build-base
 
 # Copy application code
 COPY . .
