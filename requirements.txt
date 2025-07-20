@@ -1,8 +1,8 @@
 # Lightweight dependencies for Render deployment (512MB limit)
 flask==2.3.3
 requests==2.31.0
-numpy==1.24.3
-scikit-learn==1.3.0 
+numpy==1.26.4
+scikit-learn==1.4.0
 joblib==1.3.2
 beautifulsoup4==4.12.2
 lxml==4.9.3
