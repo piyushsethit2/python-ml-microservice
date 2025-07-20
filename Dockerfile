@@ -2,8 +2,8 @@
 FROM python:3.9.18-alpine
 
 # Install system dependencies including C++ and Fortran compilers for scikit-learn/numpy/scipy
-# Also install libgomp for OpenMP support that scikit-learn needs
-RUN apk add --no-cache gcc g++ gfortran musl-dev linux-headers build-base libgomp
+# Also install libgomp for OpenMP support and libstdc++ for C++ runtime that scikit-learn needs
+RUN apk add --no-cache gcc g++ gfortran musl-dev linux-headers build-base libgomp libstdc++
 
 WORKDIR /app
 
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     # Clean up to reduce image size
     rm -rf /root/.cache/pip && \
-    # Remove build dependencies but keep libgomp for runtime
+    # Remove build dependencies but keep runtime libraries (libgomp, libstdc++)
     apk del gcc g++ gfortran build-base
 
 # Copy application code
