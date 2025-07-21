@@ -380,7 +380,7 @@ def health_check():
     """Health check endpoint for monitoring"""
     try:
         # Check if AI detector is working
-        test_result = ai_detector.analyze_url("https://example.com")
+        test_result = ai_detector.detect_malicious("https://example.com")
         
         health_status = {
             "status": "UP",
